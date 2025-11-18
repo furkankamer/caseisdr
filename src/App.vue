@@ -13,14 +13,17 @@
     </header>
 
     <main class="main-layout">
+      <!-- Horse List Panel -->
       <aside class="left-panel">
         <HorseList />
       </aside>
 
+      <!-- Race Track Panel -->
       <section class="center-panel">
         <RaceTrack />
       </section>
 
+      <!-- Program/Results Panel -->
       <aside class="right-panel">
         <div class="tabs">
           <button 

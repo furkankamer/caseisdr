@@ -4,6 +4,7 @@ import {
   TOTAL_ROUNDS,
   TOTAL_HORSES
 } from '@/constants';
+import { simulateRace } from '@/utils/raceSimulator';
 
 // Fisher-Yates shuffle for random selection
 const shuffleArray = array => {
@@ -21,7 +22,8 @@ const state = {
   currentRound: 0,
   isRacing: false,
   isPaused: false,
-  currentPositions: {}
+  currentPositions: {},
+  animationControllers: []
 };
 
 const getters = {
@@ -57,13 +59,16 @@ const mutations = {
   RESET_POSITIONS(state) {
     state.currentPositions = {};
   },
+  SET_ANIMATION_CONTROLLERS(state, controllers) {
+    state.animationControllers = controllers;
+  },
   RESET_RACE(state) {
-    state.schedule = [];
     state.results = [];
     state.currentRound = 0;
     state.isRacing = false;
     state.isPaused = false;
     state.currentPositions = {};
+    state.animationControllers = [];
   }
 };
 
@@ -73,7 +78,6 @@ const actions = {
     const schedule = [];
 
     for (let round = 0; round < TOTAL_ROUNDS; round++) {
-      // Select 10 random horses
       const availableIndices = Array.from({ length: TOTAL_HORSES }, (_, i) => i);
       const selectedIndices = shuffleArray(availableIndices).slice(
         0,
@@ -89,7 +93,6 @@ const actions = {
     }
 
     commit('SET_SCHEDULE', schedule);
-    commit('RESET_RACE');
   },
 
   async startRace({ commit, state, dispatch }) {
@@ -98,18 +101,28 @@ const actions = {
     commit('SET_RACING', true);
     commit('SET_PAUSED', false);
 
-    for (let round = 1; round <= TOTAL_ROUNDS; round++) {
-      commit('SET_CURRENT_ROUND', round);
-      await dispatch('runRound', round);
+    try {
+      for (let round = 1; round <= TOTAL_ROUNDS; round++) {
+        commit('SET_CURRENT_ROUND', round);
+        await dispatch('runRound', round);
 
-      // Wait for pause/resume if paused
-      while (state.isPaused) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        while (state.isPaused) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
+    } catch (error) {
+      console.error('Race error:', error);
+      // Cleanup on error
+      state.animationControllers.forEach(controller => {
+        if (controller && controller.cancel) {
+          controller.cancel();
+        }
+      });
+      commit('SET_ANIMATION_CONTROLLERS', []);
+    } finally {
+      commit('SET_RACING', false);
+      commit('SET_CURRENT_ROUND', 0);
     }
-
-    commit('SET_RACING', false);
-    commit('SET_CURRENT_ROUND', 0);
   },
 
   async runRound({ commit, state }) {
@@ -118,33 +131,56 @@ const actions = {
 
     commit('RESET_POSITIONS');
 
-    // Simulate race (placeholder - will be implemented with animation)
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    const racePromise = simulateRace(
+      roundData.horses,
+      roundData.distance,
+      (horseId, position) => {
+        commit('UPDATE_POSITION', { horseId, position });
+      }
+    );
 
-    // Calculate results (simplified for now)
-    const results = roundData.horses
-      .map(horse => ({
-        ...horse,
-        finishTime: Math.random() * 10 + (100 - horse.condition) * 0.1
-      }))
-      .sort((a, b) => a.finishTime - b.finishTime);
+    commit('SET_ANIMATION_CONTROLLERS', racePromise.controllers);
+
+    const results = await racePromise;
+
+    const sortedResults = results.sort((a, b) => a.position - b.position);
 
     commit('ADD_RESULT', {
       round: roundData.round,
       distance: roundData.distance,
-      results: results.map((horse, index) => ({
-        position: index + 1,
+      results: sortedResults.map(horse => ({
+        position: horse.position,
         horse
       }))
     });
+
+    // Properly cleanup animation controllers
+    state.animationControllers.forEach(controller => {
+      if (controller && controller.cancel) {
+        controller.cancel();
+      }
+    });
+    commit('SET_ANIMATION_CONTROLLERS', []);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
   },
 
-  pauseRace({ commit }) {
+  pauseRace({ commit, state }) {
     commit('SET_PAUSED', true);
+    state.animationControllers.forEach(controller => {
+      if (controller && controller.pause) {
+        controller.pause();
+      }
+    });
   },
 
-  resumeRace({ commit }) {
+  resumeRace({ commit, state }) {
     commit('SET_PAUSED', false);
+    state.animationControllers.forEach(controller => {
+      if (controller && controller.resume) {
+        controller.resume();
+      }
+    });
   }
 };
 

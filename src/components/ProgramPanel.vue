@@ -48,7 +48,7 @@ export default {
   setup() {
     const store = useStore();
 
-    const schedule = computed(() => store.state.race.schedule);
+    const schedule = computed(() => store.getters['race/getSchedule']);
     const currentRound = computed(() => store.state.race.currentRound);
 
     const getOrdinal = num => {
