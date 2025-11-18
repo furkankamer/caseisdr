@@ -42,6 +42,7 @@
 <script>
 import { computed } from 'vue';
 import { useStore } from 'vuex';
+import { getOrdinal } from '@/utils/formatters';
 
 export default {
   name: 'ProgramPanel',
@@ -50,12 +51,6 @@ export default {
 
     const schedule = computed(() => store.getters['race/getSchedule']);
     const currentRound = computed(() => store.state.race.currentRound);
-
-    const getOrdinal = num => {
-      const suffixes = ['th', 'st', 'nd', 'rd'];
-      const v = num % 100;
-      return num + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
-    };
 
     return {
       schedule,

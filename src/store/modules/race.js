@@ -4,7 +4,7 @@ import {
   TOTAL_ROUNDS,
   TOTAL_HORSES
 } from '@/constants';
-import { simulateRace } from '@/utils/raceSimulator';
+import { RaceOrchestrator } from '@/services/RaceOrchestrator';
 
 // Fisher-Yates shuffle for random selection
 const shuffleArray = array => {
@@ -16,14 +16,15 @@ const shuffleArray = array => {
   return shuffled;
 };
 
+let orchestrator = null;
+
 const state = {
   schedule: [],
   results: [],
   currentRound: 0,
   isRacing: false,
   isPaused: false,
-  currentPositions: {},
-  animationControllers: []
+  currentPositions: {}
 };
 
 const getters = {
@@ -59,16 +60,12 @@ const mutations = {
   RESET_POSITIONS(state) {
     state.currentPositions = {};
   },
-  SET_ANIMATION_CONTROLLERS(state, controllers) {
-    state.animationControllers = controllers;
-  },
   RESET_RACE(state) {
     state.results = [];
     state.currentRound = 0;
     state.isRacing = false;
     state.isPaused = false;
     state.currentPositions = {};
-    state.animationControllers = [];
   }
 };
 
@@ -96,7 +93,11 @@ const actions = {
   },
 
   async startRace({ commit, state, dispatch }) {
+    if (state.isRacing) return;
+    
     if (state.schedule.length === 0) return;
+
+    orchestrator = new RaceOrchestrator();
 
     commit('SET_RACING', true);
     commit('SET_PAUSED', false);
@@ -113,15 +114,21 @@ const actions = {
     } catch (error) {
       console.error('Race error:', error);
       // Cleanup on error
-      state.animationControllers.forEach(controller => {
-        if (controller && controller.cancel) {
-          controller.cancel();
-        }
-      });
-      commit('SET_ANIMATION_CONTROLLERS', []);
+      if (orchestrator) {
+        orchestrator.cleanup();
+      }
     } finally {
-      commit('SET_RACING', false);
-      commit('SET_CURRENT_ROUND', 0);
+      try {
+        commit('SET_RACING', false);
+        commit('SET_CURRENT_ROUND', 0);
+        
+        if (orchestrator) {
+          orchestrator.cleanup();
+          orchestrator = null;
+        }
+      } catch (cleanupError) {
+        console.warn('Race state cleanup failed:', cleanupError);
+      }
     }
   },
 
@@ -131,17 +138,13 @@ const actions = {
 
     commit('RESET_POSITIONS');
 
-    const racePromise = simulateRace(
+    const results = await orchestrator.runRound(
       roundData.horses,
       roundData.distance,
       (horseId, position) => {
         commit('UPDATE_POSITION', { horseId, position });
       }
     );
-
-    commit('SET_ANIMATION_CONTROLLERS', racePromise.controllers);
-
-    const results = await racePromise;
 
     const sortedResults = results.sort((a, b) => a.position - b.position);
 
@@ -154,33 +157,21 @@ const actions = {
       }))
     });
 
-    // Properly cleanup animation controllers
-    state.animationControllers.forEach(controller => {
-      if (controller && controller.cancel) {
-        controller.cancel();
-      }
-    });
-    commit('SET_ANIMATION_CONTROLLERS', []);
-
     await new Promise(resolve => setTimeout(resolve, 1000));
   },
 
-  pauseRace({ commit, state }) {
+  pauseRace({ commit }) {
     commit('SET_PAUSED', true);
-    state.animationControllers.forEach(controller => {
-      if (controller && controller.pause) {
-        controller.pause();
-      }
-    });
+    if (orchestrator) {
+      orchestrator.pause();
+    }
   },
 
-  resumeRace({ commit, state }) {
+  resumeRace({ commit }) {
     commit('SET_PAUSED', false);
-    state.animationControllers.forEach(controller => {
-      if (controller && controller.resume) {
-        controller.resume();
-      }
-    });
+    if (orchestrator) {
+      orchestrator.resume();
+    }
   }
 };
 
