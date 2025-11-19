@@ -61,6 +61,7 @@ const mutations = {
     state.currentPositions = {};
   },
   RESET_RACE(state) {
+    state.schedule = [];
     state.results = [];
     state.currentRound = 0;
     state.isRacing = false;
@@ -91,10 +92,18 @@ const actions = {
 
     commit('SET_SCHEDULE', schedule);
   },
+  
+  cancelRace({ commit }) {
+    if (orchestrator) {
+      orchestrator.cleanup();
+      orchestrator = null;
+    }
+    commit('RESET_RACE');
+  },
 
   async startRace({ commit, state, dispatch }) {
     if (state.isRacing) return;
-    
+
     if (state.schedule.length === 0) return;
 
     orchestrator = new RaceOrchestrator();
@@ -113,18 +122,11 @@ const actions = {
       }
     } catch (error) {
       console.error('Race error:', error);
-      // Cleanup on error
-      if (orchestrator) {
-        orchestrator.cleanup();
-      }
+      dispatch('cancelRace');
     } finally {
       try {
-        commit('SET_RACING', false);
-        commit('SET_CURRENT_ROUND', 0);
-        
-        if (orchestrator) {
-          orchestrator.cleanup();
-          orchestrator = null;
+        if (state.isRacing) {
+          dispatch('cancelRace');
         }
       } catch (cleanupError) {
         console.warn('Race state cleanup failed:', cleanupError);

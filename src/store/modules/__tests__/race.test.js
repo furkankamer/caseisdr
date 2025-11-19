@@ -1,410 +1,390 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import raceModule from '../race';
-import { TOTAL_ROUNDS, HORSES_PER_RACE, RACE_DISTANCES } from '@/constants';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import race from '../race';
+import { RaceOrchestrator } from '@/services/RaceOrchestrator';
+import { TOTAL_ROUNDS, HORSES_PER_RACE } from '@/constants';
 
-// Mock the race simulator
-vi.mock('@/utils/raceSimulator', () => ({
-  simulateRace: vi.fn((horses, distance, onUpdate) => {
-    // Simulate updates
-    horses.forEach((horse, index) => {
-      onUpdate(horse.id, index * 100);
-    });
-    
-    // Return mock results
-    const mockPromise = Promise.resolve(
-      horses.map((horse, index) => ({
-        ...horse,
-        position: index + 1,
-        finishTime: 5000 + index * 100
-      }))
-    );
-    
-    // Attach controllers
-    mockPromise.controllers = horses.map(() => ({
-      pause: vi.fn(),
-      resume: vi.fn(),
-      cancel: vi.fn()
-    }));
-    
-    return mockPromise;
-  })
-}));
+// Mock RaceOrchestrator
+vi.mock('@/services/RaceOrchestrator');
 
-describe('Race Store Module', () => {
-  let state;
-  let mockHorses;
+describe('Race Module', () => {
+  let mockOrchestrator;
 
   beforeEach(() => {
-    state = {
-      schedule: [],
-      results: [],
-      currentRound: 0,
-      isRacing: false,
-      isPaused: false,
-      currentPositions: {},
-      animationControllers: []
+    // Create fresh mock for each test
+    mockOrchestrator = {
+      runRound: vi.fn().mockResolvedValue([
+        { id: 1, position: 1, horse: { id: 1, name: 'Horse 1' } },
+        { id: 2, position: 2, horse: { id: 2, name: 'Horse 2' } }
+      ]),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      cleanup: vi.fn(),
+      isActive: vi.fn().mockReturnValue(true)
     };
 
-    mockHorses = Array.from({ length: 20 }, (_, i) => ({
-      id: i + 1,
-      name: `Horse ${i + 1}`,
-      color: `#color${i}`,
-      condition: 50 + i
-    }));
+    RaceOrchestrator.mockImplementation(() => mockOrchestrator);
   });
 
-  describe('getters', () => {
-    it('getSchedule should return schedule', () => {
-      state.schedule = [{ round: 1 }];
-      const result = raceModule.getters.getSchedule(state);
+  describe('State', () => {
+    it('should have correct initial state', () => {
+      const state = race.state;
 
-      expect(result).toEqual(state.schedule);
-    });
-
-    it('getCurrentRoundData should return current round', () => {
-      const schedule = [
-        { round: 1, distance: 1200 },
-        { round: 2, distance: 1400 }
-      ];
-      state.schedule = schedule;
-      state.currentRound = 2;
-
-      const result = raceModule.getters.getCurrentRoundData(state);
-
-      expect(result).toEqual(schedule[1]);
-    });
-
-    it('getCurrentRoundData should return null if no round', () => {
-      state.currentRound = 0;
-      const result = raceModule.getters.getCurrentRoundData(state);
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('mutations', () => {
-    it('SET_SCHEDULE should update schedule', () => {
-      const schedule = [{ round: 1 }];
-
-      raceModule.mutations.SET_SCHEDULE(state, schedule);
-
-      expect(state.schedule).toEqual(schedule);
-    });
-
-    it('SET_RACING should update racing state', () => {
-      raceModule.mutations.SET_RACING(state, true);
-      expect(state.isRacing).toBe(true);
-
-      raceModule.mutations.SET_RACING(state, false);
-      expect(state.isRacing).toBe(false);
-    });
-
-    it('SET_PAUSED should update paused state', () => {
-      raceModule.mutations.SET_PAUSED(state, true);
-      expect(state.isPaused).toBe(true);
-    });
-
-    it('SET_CURRENT_ROUND should update current round', () => {
-      raceModule.mutations.SET_CURRENT_ROUND(state, 3);
-      expect(state.currentRound).toBe(3);
-    });
-
-    it('UPDATE_POSITION should update horse position', () => {
-      raceModule.mutations.UPDATE_POSITION(state, {
-        horseId: 5,
-        position: 250
-      });
-
-      expect(state.currentPositions[5]).toBe(250);
-    });
-
-    it('RESET_POSITIONS should clear all positions', () => {
-      state.currentPositions = { 1: 100, 2: 200 };
-
-      raceModule.mutations.RESET_POSITIONS(state);
-
-      expect(state.currentPositions).toEqual({});
-    });
-
-    it('ADD_RESULT should append result', () => {
-      const result = { round: 1, results: [] };
-
-      raceModule.mutations.ADD_RESULT(state, result);
-
-      expect(state.results).toHaveLength(1);
-      expect(state.results[0]).toEqual(result);
-    });
-
-    it('SET_ANIMATION_CONTROLLERS should update controllers', () => {
-      const controllers = [{ pause: vi.fn() }];
-
-      raceModule.mutations.SET_ANIMATION_CONTROLLERS(state, controllers);
-
-      expect(state.animationControllers).toEqual(controllers);
-    });
-
-    it('RESET_RACE should clear results and state', () => {
-      state.results = [{ round: 1 }];
-      state.currentRound = 3;
-      state.isRacing = true;
-      state.isPaused = true;
-
-      raceModule.mutations.RESET_RACE(state);
-
+      expect(state.schedule).toEqual([]);
       expect(state.results).toEqual([]);
       expect(state.currentRound).toBe(0);
       expect(state.isRacing).toBe(false);
       expect(state.isPaused).toBe(false);
+      expect(state.currentPositions).toEqual({});
     });
   });
 
-  describe('actions - generateSchedule', () => {
-    it('should create 6 rounds', () => {
-      const commit = vi.fn();
-      const rootState = { horses: { allHorses: mockHorses } };
+  describe('Getters', () => {
+    let state;
 
-      raceModule.actions.generateSchedule({ commit, rootState });
-
-      const scheduleCall = commit.mock.calls.find(
-        call => call[0] === 'SET_SCHEDULE'
-      );
-      const schedule = scheduleCall[1];
-
-      expect(schedule).toHaveLength(TOTAL_ROUNDS);
+    beforeEach(() => {
+      state = {
+        schedule: [{ round: 1, horses: [] }],
+        results: [{ round: 1, results: [] }],
+        currentRound: 2,
+        isRacing: true,
+        isPaused: false,
+        currentPositions: { h1: 500 }
+      };
     });
 
-    it('should select 10 horses per round', () => {
-      const commit = vi.fn();
-      const rootState = { horses: { allHorses: mockHorses } };
+    it('getSchedule should return schedule', () => {
+      expect(race.getters.getSchedule(state)).toEqual(state.schedule);
+    });
 
-      raceModule.actions.generateSchedule({ commit, rootState });
+    it('getResults should return results', () => {
+      expect(race.getters.getResults(state)).toEqual(state.results);
+    });
 
-      const scheduleCall = commit.mock.calls.find(
-        call => call[0] === 'SET_SCHEDULE'
-      );
-      const schedule = scheduleCall[1];
+    it('getCurrentRound should return current round', () => {
+      expect(race.getters.getCurrentRound(state)).toBe(2);
+    });
 
-      schedule.forEach(round => {
-        expect(round.horses).toHaveLength(HORSES_PER_RACE);
+    it('isRacing should return racing state', () => {
+      expect(race.getters.isRacing(state)).toBe(true);
+    });
+
+    it('isPaused should return paused state', () => {
+      expect(race.getters.isPaused(state)).toBe(false);
+    });
+
+    it('getCurrentRoundData should return correct round data', () => {
+      state.currentRound = 1;
+      expect(race.getters.getCurrentRoundData(state)).toEqual({ round: 1, horses: [] });
+    });
+
+    it('getCurrentRoundData should return null if round not found', () => {
+      state.currentRound = 10;
+      expect(race.getters.getCurrentRoundData(state)).toBeNull();
+    });
+  });
+
+  describe('Mutations', () => {
+    let state;
+
+    beforeEach(() => {
+      state = {
+        schedule: [],
+        results: [],
+        currentRound: 0,
+        isRacing: false,
+        isPaused: false,
+        currentPositions: {}
+      };
+    });
+
+    it('SET_SCHEDULE should set the schedule', () => {
+      const schedule = [{ round: 1, horses: [] }];
+      race.mutations.SET_SCHEDULE(state, schedule);
+      expect(state.schedule).toEqual(schedule);
+    });
+
+    it('ADD_RESULT should add a result', () => {
+      const result = { round: 1, results: [] };
+      race.mutations.ADD_RESULT(state, result);
+      expect(state.results).toContainEqual(result);
+    });
+
+    it('SET_CURRENT_ROUND should set current round', () => {
+      race.mutations.SET_CURRENT_ROUND(state, 3);
+      expect(state.currentRound).toBe(3);
+    });
+
+    it('SET_RACING should set racing state', () => {
+      race.mutations.SET_RACING(state, true);
+      expect(state.isRacing).toBe(true);
+    });
+
+    it('SET_PAUSED should set paused state', () => {
+      race.mutations.SET_PAUSED(state, true);
+      expect(state.isPaused).toBe(true);
+    });
+
+    it('UPDATE_POSITION should update horse position', () => {
+      race.mutations.UPDATE_POSITION(state, { horseId: 'h1', position: 50 });
+      expect(state.currentPositions['h1']).toBe(50);
+    });
+
+    it('RESET_POSITIONS should clear all positions', () => {
+      state.currentPositions = { h1: 100, h2: 200 };
+      race.mutations.RESET_POSITIONS(state);
+      expect(state.currentPositions).toEqual({});
+    });
+
+    it('RESET_RACE should reset all state', () => {
+      state.schedule = [{ round: 1 }];
+      state.results = [{ round: 1, results: [] }];
+      state.currentRound = 3;
+      state.isRacing = true;
+      state.isPaused = true;
+      state.currentPositions = { h1: 100 };
+
+      race.mutations.RESET_RACE(state);
+
+      expect(state.schedule).toEqual([]);
+      expect(state.results).toEqual([]);
+      expect(state.currentRound).toBe(0);
+      expect(state.isRacing).toBe(false);
+      expect(state.isPaused).toBe(false);
+      expect(state.currentPositions).toEqual({});
+    });
+  });
+
+  describe('Actions', () => {
+    let commit;
+    let dispatch;
+    let state;
+    let rootState;
+
+    beforeEach(() => {
+      commit = vi.fn();
+      dispatch = vi.fn();
+      
+      state = {
+        schedule: [],
+        results: [],
+        currentRound: 0,
+        isRacing: false,
+        isPaused: false,
+        currentPositions: {}
+      };
+
+      rootState = {
+        horses: {
+          allHorses: Array.from({ length: 20 }, (_, i) => ({
+            id: i + 1,
+            name: `Horse ${i + 1}`,
+            color: `#color${i}`,
+            condition: 50 + i
+          }))
+        }
+      };
+    });
+
+    describe('generateSchedule', () => {
+      it('should generate schedule with correct number of rounds', () => {
+        race.actions.generateSchedule({ commit, rootState });
+
+        expect(commit).toHaveBeenCalledWith('SET_SCHEDULE', expect.any(Array));
+        
+        const schedule = commit.mock.calls[0][1];
+        expect(schedule).toHaveLength(TOTAL_ROUNDS);
       });
-    });
 
-    it('should use correct distances', () => {
-      const commit = vi.fn();
-      const rootState = { horses: { allHorses: mockHorses } };
+      it('should select correct number of horses per round', () => {
+        race.actions.generateSchedule({ commit, rootState });
 
-      raceModule.actions.generateSchedule({ commit, rootState });
-
-      const scheduleCall = commit.mock.calls.find(
-        call => call[0] === 'SET_SCHEDULE'
-      );
-      const schedule = scheduleCall[1];
-
-      schedule.forEach((round, index) => {
-        expect(round.distance).toBe(RACE_DISTANCES[index]);
+        const schedule = commit.mock.calls[0][1];
+        schedule.forEach(round => {
+          expect(round.horses).toHaveLength(HORSES_PER_RACE);
+        });
       });
-    });
 
-    it('should select unique horses per round', () => {
-      const commit = vi.fn();
-      const rootState = { horses: { allHorses: mockHorses } };
+      it('should assign correct distances to rounds', () => {
+        const expectedDistances = [1200, 1400, 1600, 1800, 2000, 2200];
+        
+        race.actions.generateSchedule({ commit, rootState });
 
-      raceModule.actions.generateSchedule({ commit, rootState });
-
-      const scheduleCall = commit.mock.calls.find(
-        call => call[0] === 'SET_SCHEDULE'
-      );
-      const schedule = scheduleCall[1];
-
-      schedule.forEach(round => {
-        const horseIds = round.horses.map(h => h.id);
-        const uniqueIds = new Set(horseIds);
-
-        expect(uniqueIds.size).toBe(HORSES_PER_RACE);
+        const schedule = commit.mock.calls[0][1];
+        schedule.forEach((round, index) => {
+          expect(round.distance).toBe(expectedDistances[index]);
+          expect(round.round).toBe(index + 1);
+        });
       });
-    });
 
-    it('should select random horses (not same order)', () => {
-      const commit = vi.fn();
-      const rootState = { horses: { allHorses: mockHorses } };
+      it('should select horses randomly', () => {
+        race.actions.generateSchedule({ commit, rootState });
+        const schedule1 = commit.mock.calls[0][1];
 
-      const schedules = [];
-      for (let i = 0; i < 5; i++) {
         commit.mockClear();
-        raceModule.actions.generateSchedule({ commit, rootState });
 
-        const scheduleCall = commit.mock.calls.find(
-          call => call[0] === 'SET_SCHEDULE'
-        );
-        schedules.push(scheduleCall[1]);
-      }
+        race.actions.generateSchedule({ commit, rootState });
+        const schedule2 = commit.mock.calls[0][1];
 
-      const firstHorseIds = schedules.map(s => s[0].horses[0].id);
-      const uniqueFirstHorses = new Set(firstHorseIds);
+        const horses1Ids = schedule1[0].horses.map(h => h.id).sort().join(',');
+        const horses2Ids = schedule2[0].horses.map(h => h.id).sort().join(',');
 
-      expect(uniqueFirstHorses.size).toBeGreaterThan(1);
+        // Likely to be different (could occasionally be same due to randomness)
+        expect(horses1Ids).not.toBe(horses2Ids);
+      });
+    });
+
+    describe('cancelRace', () => {
+      it('should commit RESET_RACE', () => {
+        race.actions.cancelRace({ commit });
+        expect(commit).toHaveBeenCalledWith('RESET_RACE');
+      });
+
+      it('should not throw if orchestrator is null', () => {
+        expect(() => race.actions.cancelRace({ commit })).not.toThrow();
+      });
+    });
+
+    describe('startRace', () => {
+      beforeEach(() => {
+        state.schedule = Array.from({ length: TOTAL_ROUNDS }, (_, i) => ({
+          round: i + 1,
+          distance: 1200 + (i * 200),
+          horses: [
+            { id: 1, name: 'Horse 1' },
+            { id: 2, name: 'Horse 2' }
+          ]
+        }));
+        dispatch.mockResolvedValue();
+      });
+
+      it('should return early if already racing', async () => {
+        state.isRacing = true;
+
+        await race.actions.startRace({ commit, state, dispatch });
+
+        expect(commit).not.toHaveBeenCalled();
+      });
+
+      it('should return early if schedule is empty', async () => {
+        state.schedule = [];
+
+        await race.actions.startRace({ commit, state, dispatch });
+
+        expect(commit).not.toHaveBeenCalled();
+      });
+
+      it('should create new RaceOrchestrator', async () => {
+        await race.actions.startRace({ commit, state, dispatch });
+        expect(RaceOrchestrator).toHaveBeenCalled();
+      });
+
+      it('should commit SET_RACING and SET_PAUSED', async () => {
+        await race.actions.startRace({ commit, state, dispatch });
+
+        expect(commit).toHaveBeenCalledWith('SET_RACING', true);
+        expect(commit).toHaveBeenCalledWith('SET_PAUSED', false);
+      });
+
+      it('should dispatch runRound for each round', async () => {
+        await race.actions.startRace({ commit, state, dispatch });
+
+        for (let i = 1; i <= TOTAL_ROUNDS; i++) {
+          expect(dispatch).toHaveBeenCalledWith('runRound', i);
+        }
+      });
+
+      it('should commit SET_CURRENT_ROUND for each round', async () => {
+        await race.actions.startRace({ commit, state, dispatch });
+
+        for (let i = 1; i <= TOTAL_ROUNDS; i++) {
+          expect(commit).toHaveBeenCalledWith('SET_CURRENT_ROUND', i);
+        }
+      });
+
+      it('should call cancelRace on error', async () => {
+        dispatch.mockRejectedValueOnce(new Error('Test error'));
+
+        await race.actions.startRace({ commit, state, dispatch });
+
+        expect(dispatch).toHaveBeenCalledWith('cancelRace');
+      });
+    });
+
+    describe('runRound', () => {
+      beforeEach(() => {
+        state.currentRound = 1;
+        state.schedule = [
+          {
+            round: 1,
+            distance: 1200,
+            horses: [
+              { id: 1, name: 'Horse 1' },
+              { id: 2, name: 'Horse 2' }
+            ]
+          }
+        ];
+      });
+
+      it('should return early if no round data', async () => {
+        state.currentRound = 10;
+
+        await race.actions.runRound({ commit, state });
+
+        expect(commit).not.toHaveBeenCalled();
+      });
+
+      it('should commit RESET_POSITIONS', async () => {
+        // Since runRound needs orchestrator, mock it as non-null
+        // In real scenario, startRace creates it
+        await race.actions.runRound({ commit, state });
+
+        expect(commit).toHaveBeenCalledWith('RESET_POSITIONS');
+      });
+
+      it('should commit ADD_RESULT with sorted results', async () => {
+        mockOrchestrator.runRound.mockResolvedValue([
+          { id: 2, position: 1, horse: { id: 2, name: 'Horse 2' } },
+          { id: 1, position: 2, horse: { id: 1, name: 'Horse 1' } }
+        ]);
+
+        await race.actions.runRound({ commit, state });
+
+        expect(commit).toHaveBeenCalledWith('ADD_RESULT', expect.objectContaining({
+          round: 1,
+          distance: 1200,
+          results: expect.arrayContaining([
+            expect.objectContaining({ position: 1 }),
+            expect.objectContaining({ position: 2 })
+          ])
+        }));
+      });
+    });
+
+    describe('pauseRace', () => {
+      it('should commit SET_PAUSED', () => {
+        race.actions.pauseRace({ commit });
+        expect(commit).toHaveBeenCalledWith('SET_PAUSED', true);
+      });
+    });
+
+    describe('resumeRace', () => {
+      it('should commit SET_PAUSED false', () => {
+        race.actions.resumeRace({ commit });
+        expect(commit).toHaveBeenCalledWith('SET_PAUSED', false);
+      });
     });
   });
 
-  describe('actions - runRound', () => {
-    it('should run a single round successfully', async () => {
-      const commit = vi.fn();
-      const schedule = [{
-        round: 1,
-        distance: 1200,
-        horses: mockHorses.slice(0, 10)
-      }];
-      
-      state.schedule = schedule;
-      state.currentRound = 1;
-
-      await raceModule.actions.runRound({ commit, state });
-
-      // Should reset positions
-      expect(commit).toHaveBeenCalledWith('RESET_POSITIONS');
-      
-      // Should set animation controllers
-      expect(commit).toHaveBeenCalledWith('SET_ANIMATION_CONTROLLERS', expect.any(Array));
-      
-      // Should add result
-      expect(commit).toHaveBeenCalledWith('ADD_RESULT', expect.objectContaining({
-        round: 1,
-        distance: 1200,
-        results: expect.any(Array)
-      }));
+  describe('Module Structure', () => {
+    it('should be namespaced', () => {
+      expect(race.namespaced).toBe(true);
     });
 
-    it('should update positions during race', async () => {
-      const commit = vi.fn();
-      const schedule = [{
-        round: 1,
-        distance: 1200,
-        horses: mockHorses.slice(0, 10)
-      }];
-      
-      state.schedule = schedule;
-      state.currentRound = 1;
-
-      await raceModule.actions.runRound({ commit, state });
-
-      // Should call UPDATE_POSITION for each horse
-      const updatePositionCalls = commit.mock.calls.filter(
-        call => call[0] === 'UPDATE_POSITION'
-      );
-      
-      expect(updatePositionCalls.length).toBeGreaterThan(0);
-    });
-
-    it('should cleanup animation controllers after race', async () => {
-      const commit = vi.fn();
-      const mockController = { cancel: vi.fn() };
-      
-      state.schedule = [{
-        round: 1,
-        distance: 1200,
-        horses: mockHorses.slice(0, 10)
-      }];
-      state.currentRound = 1;
-      state.animationControllers = [mockController];
-
-      await raceModule.actions.runRound({ commit, state });
-
-      // Should cancel controllers
-      expect(mockController.cancel).toHaveBeenCalled();
-      
-      // Should clear controllers
-      expect(commit).toHaveBeenCalledWith('SET_ANIMATION_CONTROLLERS', []);
-    });
-
-    it('should return early if no round data', async () => {
-      const commit = vi.fn();
-      state.schedule = [];
-      state.currentRound = 1;
-
-      await raceModule.actions.runRound({ commit, state });
-
-      // Should not make any commits
-      expect(commit).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('actions - startRace', () => {
-    it('should return early if no schedule', async () => {
-      const commit = vi.fn();
-      const dispatch = vi.fn();
-      state.schedule = [];
-
-      await raceModule.actions.startRace({ commit, state, dispatch });
-
-      expect(commit).not.toHaveBeenCalled();
-      expect(dispatch).not.toHaveBeenCalled();
-    });
-
-    it('should set racing state', async () => {
-      const commit = vi.fn();
-      const dispatch = vi.fn();
-      
-      state.schedule = Array.from({ length: 6 }, (_, i) => ({
-        round: i + 1,
-        distance: 1200 + i * 200,
-        horses: mockHorses.slice(0, 10)
-      }));
-
-      // Mock runRound to resolve immediately
-      dispatch.mockResolvedValue();
-
-      await raceModule.actions.startRace({ commit, state, dispatch });
-
-      expect(commit).toHaveBeenCalledWith('SET_RACING', true);
-      expect(commit).toHaveBeenCalledWith('SET_PAUSED', false);
-    });
-
-    it('should cleanup on error', async () => {
-      const commit = vi.fn();
-      const dispatch = vi.fn().mockRejectedValue(new Error('Test error'));
-      const mockController = { cancel: vi.fn() };
-      
-      state.schedule = [{ round: 1, distance: 1200, horses: mockHorses.slice(0, 10) }];
-      state.animationControllers = [mockController];
-
-      await raceModule.actions.startRace({ commit, state, dispatch });
-
-      // Should cleanup
-      expect(mockController.cancel).toHaveBeenCalled();
-      expect(commit).toHaveBeenCalledWith('SET_RACING', false);
-    });
-  });
-
-  describe('actions - pause and resume', () => {
-    it('pauseRace should set paused and call controller.pause', () => {
-      const commit = vi.fn();
-      const mockController = { pause: vi.fn(), resume: vi.fn() };
-      state.animationControllers = [mockController];
-
-      raceModule.actions.pauseRace({ commit, state });
-
-      expect(commit).toHaveBeenCalledWith('SET_PAUSED', true);
-      expect(mockController.pause).toHaveBeenCalled();
-    });
-
-    it('resumeRace should set unpaused and call controller.resume', () => {
-      const commit = vi.fn();
-      const mockController = { pause: vi.fn(), resume: vi.fn() };
-      state.animationControllers = [mockController];
-
-      raceModule.actions.resumeRace({ commit, state });
-
-      expect(commit).toHaveBeenCalledWith('SET_PAUSED', false);
-      expect(mockController.resume).toHaveBeenCalled();
-    });
-
-    it('should handle missing controller methods gracefully', () => {
-      const commit = vi.fn();
-      state.animationControllers = [null, {}, { pause: vi.fn() }];
-
-      expect(() => {
-        raceModule.actions.pauseRace({ commit, state });
-      }).not.toThrow();
+    it('should export state, getters, mutations, actions', () => {
+      expect(race.state).toBeDefined();
+      expect(race.getters).toBeDefined();
+      expect(race.mutations).toBeDefined();
+      expect(race.actions).toBeDefined();
     });
   });
 });

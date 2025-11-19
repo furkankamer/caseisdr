@@ -13,17 +13,14 @@
     </header>
 
     <main class="main-layout">
-      <!-- Horse List Panel -->
       <aside class="left-panel">
         <HorseList />
       </aside>
 
-      <!-- Race Track Panel -->
       <section class="center-panel">
         <RaceTrack />
       </section>
 
-      <!-- Program/Results Panel -->
       <aside class="right-panel">
         <div class="tabs">
           <button 
@@ -72,12 +69,17 @@ export default {
 
     const raceButtonText = computed(() => {
       if (!isRacing.value) return 'START';
-      if (isPaused.value) return 'START';
+      if (isPaused.value) return 'START'; 
       return 'PAUSE';
     });
 
-    const generateProgram = () => {
+    const generateProgram = async () => {
+      if (isRacing.value) {
+        await store.dispatch('race/cancelRace');
+      }
+      
       store.dispatch('race/generateSchedule');
+      activeTab.value = 'program'; // Programı göster
     };
 
     const toggleRace = () => {
