@@ -12,7 +12,7 @@ npm install
 npm run dev
 
 # Unit tests
-npm run test:unit
+npm test
 
 # E2E tests
 npm run test:e2e
